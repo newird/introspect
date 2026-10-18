@@ -1,0 +1,4 @@
+# 强制脚本统一 LF 换行，避免 Windows 提交 CRLF 后 Linux/macOS 执行报错
+*.sh  text eol=lf
+*.py  text eol=lf
+*.md  text eol=lf

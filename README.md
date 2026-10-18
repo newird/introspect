@@ -51,6 +51,23 @@ schtasks /Create /TN habit-feedback-daily /TR "powershell -NoProfile -ExecutionP
 schtasks /Create /TN habit-reflect-daily   /TR "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\path\to\introspect\reflect.ps1" /SC DAILY /ST 22:30
 ```
 
+### Linux / macOS（cron）
+
+一键安装（幂等，重复运行会替换旧条目）：
+
+```bash
+bash install-cron.sh
+```
+
+或手动 `crontab -e` 加入：
+
+```cron
+15 22 * * * /path/to/introspect/run.sh >> /path/to/introspect/state/cron.log 2>&1
+30 22 * * * /path/to/introspect/reflect.sh >> /path/to/introspect/state/cron.log 2>&1
+```
+
+> cron 的 PATH 很精简；若 `python3` 不在 `/usr/bin`，请把 `run.sh` / `reflect.sh` 里的 `python3` 改成绝对路径（`command -v python3` 查看），或在 cron 行首加 `PATH=/usr/local/bin:/usr/bin:/bin`。
+
 ## 隐私
 
 - 代码里不含任何密钥；DeepSeek key 在运行时从环境变量 / 凭据文件读取，不落盘到仓库。
@@ -64,5 +81,7 @@ habit_feedback.py     主脚本（4 个适配器 + stats / digest / llm / reflec
 reflect_prompt.md     复盘提示词（可编辑，复盘方法论演进不必改代码）
 config.example.json   配置模板（复制为 config.json 后本地修改）
 run.ps1 / reflect.ps1 Windows 定时包装脚本
+run.sh / reflect.sh   Linux / macOS 定时包装脚本
+install-cron.sh       安装 cron 任务（幂等）
 state/                运行状态（水位线、计数、摘要、自改进建议），不入库
 ```
