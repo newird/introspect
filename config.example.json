@@ -1,0 +1,8 @@
+{
+  "doc_habits": "~/Desktop/语言习惯观察.md",
+  "doc_agents_codex": "~/.codex/AGENTS.md",
+  "doc_agents_claude": "~/.claude/CLAUDE.md",
+  "doc_reflect": "~/Desktop/每日思考复盘.md",
+  "initial_watermark_ms": 0,
+  "top_n": 15
+}

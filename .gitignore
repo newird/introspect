@@ -1,0 +1,9 @@
+# runtime state (watermarks, counts, digests of your real conversations)
+state/
+
+# personal config — copy config.example.json to config.json and edit locally
+config.json
+
+# python
+__pycache__/
+*.pyc
