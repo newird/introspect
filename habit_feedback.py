@@ -526,39 +526,52 @@ def _extract_fence(text):
     return text.strip()
 
 
-def _section_text(doc, start_h, end_h):
-    """Return the body between two headings (exclusive of both)."""
-    lines = doc.splitlines()
-    out = []
-    i = 0
-    while i < len(lines) and lines[i].strip() != start_h:
-        i += 1
-    i += 1
-    while i < len(lines) and lines[i].strip() != end_h:
-        out.append(lines[i])
-        i += 1
-    return "\n".join(out).strip()
+def _split_habits_suggestions(body):
+    """Split LLM output into (habits, suggestions) at the 改进建议 marker."""
+    m = re.search(r"(?m)^#{1,4}\s*改进建议\s*$", body)
+    if m:
+        habits = body[:m.start()].strip()
+        suggestions = body[m.end():].strip()
+    else:
+        habits = body.strip()
+        suggestions = ""
+    habits = re.sub(r"(?m)^#{1,4}\s*需要注意的语言习惯\s*$", "", habits).strip()
+    return habits, suggestions
 
 
-def _replace_section(doc, start_h, end_h, new_text):
+def _is_empty(text):
+    t = (text or "").strip().strip("-").strip()
+    return not t or t.startswith("无")
+
+
+def _prepend_dated(doc, section, date, content):
+    """Insert a dated block right after a section heading (newest first)."""
+    if _is_empty(content):
+        return doc
     eol = "\r\n" if "\r\n" in doc else "\n"
-    new_text = new_text.replace("\r\n", "\n").replace("\n", eol)
+    block = "### %s\n\n%s" % (date, content.replace("\r\n", "\n").strip())
     lines = doc.splitlines()
     out = []
     i = 0
+    inserted = False
     while i < len(lines):
-        if lines[i].strip() == start_h:
+        if lines[i].strip().startswith("## %s" % section) and not inserted:
             out.append(lines[i])
-            out.append("")
             j = i + 1
-            while j < len(lines) and lines[j].strip() != end_h:
+            while j < len(lines) and not lines[j].strip():
+                out.append(lines[j])
                 j += 1
-            out.append(new_text)
+            out.extend(block.split("\n"))
             out.append("")
+            inserted = True
             i = j
             continue
         out.append(lines[i])
         i += 1
+    if not inserted:
+        out.append("## %s（按日期，新的在上）" % section)
+        out.append("")
+        out.extend(block.split("\n"))
     return eol.join(out)
 
 
@@ -575,17 +588,13 @@ def _has_messages(dig):
 
 
 HABITS_SYS = (
-    "你是用户「语言习惯观察」文档的维护者。用户用中文与多个 coding agent 交流，"
-    "下面提供本次新增的用户消息（只含用户本人发言，agent 回复已剔除）。"
-    "你的任务：判断是否有值得记录的、反复出现（≥2 次）的表达问题，并更新文档两个小节。\n"
+    "你是用户「语言习惯观察」文档的维护者。下面提供本次新增的用户消息（只含用户本人发言，agent 回复已剔除）。"
+    "你的任务：只基于**本次新增**的消息，提炼今天值得记录的表达问题与改进建议（不要重复历史内容）。\n"
     "要求：\n"
-    "1. 保持「需要注意的语言习惯」的编号列表结构，以及「## 改进建议」标题及其编号列表。\n"
-    "2. 只新增/更新有 ≥2 次证据的习惯，偶发一次的不记；已有条目仍有价值则保留并可补充新例句。\n"
-    "3. 「改进建议」给出「原句 → 建议改写」的对照。\n"
-    "4. 若本次没有新习惯，原样输出当前内容（不要为空、不要删减）。\n"
-    "5. 只输出这段更新后的内容（边界与当前内容一致：从「需要注意的语言习惯」的第一个编号项开始，"
-    "到「改进建议」小节结束；不要包含「## 需要注意的语言习惯」和「## 维护日志」两行标题），"
-    "包在一个 ```markdown 代码块里，不要输出任何其他文字。"
+    "1. 输出两部分，中间用单独一行「### 改进建议」分隔：前半是「需要注意的语言习惯」，后半是「改进建议」。\n"
+    "2. 「需要注意的语言习惯」：只记录今天新消息里反复出现（≥2 次）或明显值得注意的表达问题，附真实例句；今天没有就写「无」。\n"
+    "3. 「改进建议」：针对上述问题给出「原句 → 建议改写」对照；没有就写「无」。\n"
+    "4. 整体包在一个 ```markdown 代码块里，不要输出任何其他文字。"
 )
 
 
@@ -594,21 +603,26 @@ def llm_habits():
     if not _has_messages(dig):
         print("[llm:habits] no new messages, skip")
         return
-    doc = open(CONFIG["doc_habits"], encoding="utf-8").read()
-    cur = _section_text(doc, "## 需要注意的语言习惯", "## 维护日志")
-    user = f"# 本次新增用户消息\n{dig}\n\n# 当前两个小节内容\n{cur}\n\n请输出更新后的内容。"
+    user = f"# 本次新增用户消息\n{dig}\n\n请按提示词要求输出今天的新观察。"
     try:
         content = chat([{"role": "system", "content": HABITS_SYS}, {"role": "user", "content": user}])
     except Exception as e:
         print(f"[llm:habits] LLM call failed: {e}")
         return
-    new = _extract_fence(content)
-    if not new or new == cur:
-        print("[llm:habits] no change")
+    body = _extract_fence(content)
+    if not body:
+        print("[llm:habits] no parseable output")
         return
-    new_doc = _replace_section(doc, "## 需要注意的语言习惯", "## 维护日志", new)
-    new_doc = _append_log(new_doc, f"- {datetime.date.today().isoformat()}：语义分析，更新「需要注意的语言习惯」与「改进建议」。")
-    open(CONFIG["doc_habits"], "w", encoding="utf-8", newline="").write(new_doc)
+    habits, suggestions = _split_habits_suggestions(body)
+    if _is_empty(habits) and _is_empty(suggestions):
+        print("[llm:habits] nothing new today")
+        return
+    today = datetime.date.today().isoformat()
+    doc = open(CONFIG["doc_habits"], encoding="utf-8").read()
+    doc = _prepend_dated(doc, "需要注意的语言习惯", today, habits)
+    doc = _prepend_dated(doc, "改进建议", today, suggestions)
+    doc = _append_log(doc, f"- {today}：语义分析，新增当天「需要注意的语言习惯」与「改进建议」。")
+    open(CONFIG["doc_habits"], "w", encoding="utf-8", newline="").write(doc)
     print("[llm:habits] updated")
 
 
